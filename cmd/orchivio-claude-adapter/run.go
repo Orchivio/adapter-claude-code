@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,7 @@ type runConfig struct {
 	QuestionPath string
 	Now          func() time.Time
 	MCPDir       string
+	MaxLine      int // max stream line bytes; 0 = maxStreamLine
 }
 
 // buildArgs assembles the claude CLI arguments; the first workdir is the cwd, not an argument.
@@ -83,6 +85,8 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, cfg run
 		return fmt.Errorf("remove stale question: %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, cfg.ClaudeBin, buildArgs(spec, mcpPath)...)
 	if len(spec.Workdirs) > 0 {
 		cmd.Dir = spec.Workdirs[0]
@@ -97,20 +101,42 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, cfg run
 		return fmt.Errorf("start claude: %w", err)
 	}
 	finished, streamErr := pump(pipe, stdout, stderr, cfg)
+	if streamErr != nil {
+		cancel() // claude would otherwise keep running and block Wait
+	}
 	waitErr := cmd.Wait()
 	if streamErr != nil {
 		return streamErr
 	}
-	if waitErr != nil && !finished {
-		return fmt.Errorf("claude exited without result: %w", waitErr)
+	if finished {
+		return nil
 	}
-	return nil
+	// claude ended without a result line: still report a terminal event.
+	if err := emitQuestion(stdout, cfg); err != nil {
+		return err
+	}
+	return emit(stdout, &pluginv1.AgentEvent{
+		Type: "run.finished", At: timestamppb.New(cfg.Now()), Status: "error",
+		Text: fmt.Sprintf("claude exited without result (exit code %d)", exitCode(waitErr)),
+	})
+}
+
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 0
 }
 
 // pump translates the CLI stream and reports whether run.finished was emitted.
 func pump(r io.Reader, stdout, stderr io.Writer, cfg runConfig) (bool, error) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 1<<20), maxStreamLine)
+	limit := cfg.MaxLine
+	if limit == 0 {
+		limit = maxStreamLine
+	}
+	sc.Buffer(make([]byte, min(limit, 64<<10)), limit)
 	finished := false
 	for sc.Scan() {
 		_, _ = stderr.Write(append(append([]byte{}, sc.Bytes()...), '\n'))
@@ -140,6 +166,9 @@ func emitQuestion(w io.Writer, cfg runConfig) error {
 	}
 	if err != nil {
 		return fmt.Errorf("read question: %w", err)
+	}
+	if len(bytes.TrimSpace(q)) == 0 {
+		return nil
 	}
 	return emit(w, &pluginv1.AgentEvent{Type: "question.asked", At: timestamppb.New(cfg.Now()), Text: string(q)})
 }

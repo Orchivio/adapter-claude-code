@@ -84,3 +84,68 @@ func TestRunEmitsNormalizedEvents(t *testing.T) {
 		t.Error("raw stream not forwarded to stderr")
 	}
 }
+
+func runFake(t *testing.T, script string, maxLine int) (string, error) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	cfg := runConfig{ClaudeBin: bin, QuestionPath: filepath.Join(dir, "question"), MCPDir: dir, MaxLine: maxLine,
+		Now: func() time.Time { return time.Unix(1, 0) }}
+	err := run(context.Background(), strings.NewReader(`{"prompt":"x","model":"m"}`), &out, &bytes.Buffer{}, cfg)
+	return out.String(), err
+}
+
+func lastEvent(t *testing.T, out string) *pluginv1.AgentEvent {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	e := &pluginv1.AgentEvent{}
+	if err := protojson.Unmarshal([]byte(lines[len(lines)-1]), e); err != nil {
+		t.Fatalf("bad line: %v", err)
+	}
+	return e
+}
+
+func TestRunWithoutResultEmitsErrorFinished(t *testing.T) {
+	const initLine = `echo '{"type":"system","subtype":"init","session_id":"s","model":"m"}'`
+	for name, tc := range map[string]struct{ script, want string }{
+		"exit0": {initLine, "exit code 0"},
+		"exit3": {initLine + "\nexit 3", "exit code 3"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runFake(t, tc.script, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := lastEvent(t, out)
+			if e.Type != "run.finished" || e.Status != "error" || !strings.Contains(e.Text, tc.want) {
+				t.Fatalf("last = %v", e)
+			}
+		})
+	}
+}
+
+func TestRunWithoutResultEmitsQuestionFirst(t *testing.T) {
+	out, err := runFake(t, `printf 'Why?' > "$(dirname "$0")/question"`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "question.asked") || !strings.Contains(lines[1], "run.finished") {
+		t.Fatalf("out = %s", out)
+	}
+}
+
+func TestRunOversizedLineKillsClaude(t *testing.T) {
+	start := time.Now()
+	_, err := runFake(t, "head -c 5000 /dev/zero | tr '\\0' a; echo; sleep 30", 1000)
+	if err == nil {
+		t.Fatal("expected stream error")
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("claude was not killed")
+	}
+}

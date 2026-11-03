@@ -4,9 +4,11 @@ package askhuman
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -23,6 +25,9 @@ func NewServer(questionPath string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "orchivio", Version: "0.1.0"}, nil)
 	mcp.AddTool(s, &mcp.Tool{Name: "ask_human", Description: "Ask the human a question when you cannot proceed. After calling, stop working."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in input) (*mcp.CallToolResult, any, error) {
+			if strings.TrimSpace(in.Question) == "" {
+				return nil, nil, errors.New("question must not be empty")
+			}
 			if err := os.MkdirAll(filepath.Dir(questionPath), 0o755); err != nil {
 				return nil, nil, fmt.Errorf("create question dir: %w", err)
 			}
