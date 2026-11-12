@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/soemii/orchivio-adapter-claude-code/internal/normalize"
-	pluginv1 "github.com/soemii/orchivio-server/contract/gen/orchivio/plugin/v1"
+	"github.com/orchivio/adapter-claude-code/internal/normalize"
+	pluginv1 "github.com/orchivio/orchestrator/contract/gen/orchivio/plugin/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

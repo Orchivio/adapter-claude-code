@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/soemii/orchivio-adapter-claude-code/internal/askhuman"
+	"github.com/orchivio/adapter-claude-code/internal/askhuman"
 )
 
 const (
