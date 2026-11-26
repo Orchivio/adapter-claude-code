@@ -3,7 +3,7 @@ module github.com/orchivio/adapter-claude-code
 go 1.26.3
 
 require (
-	github.com/orchivio/orchestrator/contract v0.1.0
+	github.com/orchivio/orchestrator/contract v0.2.0
 	google.golang.org/protobuf v1.36.12
 )
 
